@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="City of Hercules Home Occupation Administrative Use Permit review tool" />
+  <title>Hercules Home Occupation Review</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">City of Hercules</p>
+      <h1>Home Occupation AUP Review</h1>
+      <p class="subtitle">Upload a completed application, review the stoplight flags, and generate the Tentative Notice of Decision.</p>
+    </div>
+  </header>
+
+  <main class="page-shell">
+    <section class="card upload-card" aria-labelledby="upload-heading">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">Step 1</p>
+          <h2 id="upload-heading">Load application</h2>
+        </div>
+        <span id="pdf-status" class="pill neutral">No PDF loaded</span>
+      </div>
+
+      <label class="dropzone" for="pdf-file">
+        <span class="dropzone-title">Choose completed Home Occupation PDF</span>
+        <span class="dropzone-help">The PDF is read locally in your browser. It is not uploaded anywhere.</span>
+        <input id="pdf-file" type="file" accept="application/pdf,.pdf" />
+      </label>
+      <p id="pdf-error" class="error-message" role="alert" hidden></p>
+    </section>
+
+    <section class="card" aria-labelledby="application-heading">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">Step 2</p>
+          <h2 id="application-heading">Application data</h2>
+        </div>
+        <button id="clear-form" class="button secondary" type="button">Clear</button>
+      </div>
+
+      <div class="form-grid two-col">
+        <label>
+          <span>AUP number</span>
+          <input id="aup-number" type="text" autocomplete="off" placeholder="e.g., 26-14" />
+        </label>
+        <label>
+          <span>Property address</span>
+          <input id="property-address" type="text" autocomplete="off" />
+        </label>
+        <label>
+          <span>Applicant</span>
+          <input id="applicant-name" type="text" autocomplete="off" />
+        </label>
+        <label>
+          <span>Business name</span>
+          <input id="business-name" type="text" autocomplete="off" />
+        </label>
+      </div>
+
+      <div class="form-grid one-col compact-top">
+        <label>
+          <span>Describe the business</span>
+          <textarea id="business-description" rows="2"></textarea>
+        </label>
+        <label>
+          <span>Describe how the business will operate from home</span>
+          <textarea id="home-operation" rows="2"></textarea>
+        </label>
+      </div>
+
+      <div class="form-grid three-col compact-top">
+        <label>
+          <span>Clients visit home?</span>
+          <select id="clients-visit">
+            <option value="unknown">Unknown</option>
+            <option value="no">No</option>
+            <option value="yes">Yes</option>
+          </select>
+        </label>
+        <label>
+          <span>Hours / day</span>
+          <input id="hours-day" type="text" inputmode="decimal" />
+        </label>
+        <label>
+          <span>Hours / week</span>
+          <input id="hours-week" type="text" inputmode="decimal" />
+        </label>
+      </div>
+
+      <div class="form-grid one-col compact-top">
+        <label>
+          <span>Client scheduling / number at one time</span>
+          <input id="client-details" type="text" />
+        </label>
+        <label>
+          <span>Deliveries other than U.S. Mail</span>
+          <textarea id="deliveries" rows="2"></textarea>
+        </label>
+        <label>
+          <span>Vehicle registered to applicant</span>
+          <input id="vehicle" type="text" />
+        </label>
+        <label>
+          <span>Area of residence used for business</span>
+          <input id="area-location" type="text" />
+        </label>
+      </div>
+
+      <div class="form-grid four-col compact-top">
+        <label>
+          <span>Office area (sq. ft.)</span>
+          <input id="office-sqft" type="number" min="0" step="1" />
+        </label>
+        <label>
+          <span>Storage area (sq. ft.)</span>
+          <input id="storage-sqft" type="number" min="0" step="1" />
+        </label>
+        <label>
+          <span>Review business area (sq. ft.)</span>
+          <input id="review-sqft" type="number" min="0" step="1" />
+          <small>Auto-filled as office + storage; planner may edit.</small>
+        </label>
+        <label>
+          <span>Total dwelling (sq. ft.)</span>
+          <input id="home-sqft" type="number" min="1" step="1" />
+        </label>
+      </div>
+
+      <div class="form-grid two-col compact-top">
+        <label>
+          <span>Materials stored at home</span>
+          <input id="materials" type="text" />
+        </label>
+        <label>
+          <span>Where materials are stored</span>
+          <input id="materials-location" type="text" />
+        </label>
+      </div>
+
+      <div class="form-grid three-col compact-top">
+        <label>
+          <span>Hazardous materials?</span>
+          <select id="hazardous">
+            <option value="unknown">Unknown</option>
+            <option value="no">No</option>
+            <option value="yes">Yes</option>
+          </select>
+        </label>
+        <label>
+          <span>People operating business</span>
+          <input id="people-count" type="text" />
+        </label>
+        <label>
+          <span>Residence improvements?</span>
+          <select id="improvements">
+            <option value="unknown">Unknown</option>
+            <option value="no">No</option>
+            <option value="yes">Yes</option>
+          </select>
+        </label>
+      </div>
+
+      <details id="raw-fields-panel" class="debug-panel">
+        <summary>PDF field debug</summary>
+        <p>Useful while testing real applications. If a field imports incorrectly, this shows the exact PDF field name and value.</p>
+        <div id="raw-fields" class="raw-fields"></div>
+      </details>
+    </section>
+
+    <section class="card" aria-labelledby="review-heading">
+      <div class="section-heading review-title-row">
+        <div>
+          <p class="step-label">Step 3</p>
+          <h2 id="review-heading">Stoplight review</h2>
+        </div>
+        <div class="status-summary" aria-live="polite">
+          <span><strong id="green-count">0</strong> green</span>
+          <span><strong id="yellow-count">0</strong> yellow</span>
+          <span><strong id="red-count">0</strong> red</span>
+        </div>
+      </div>
+
+      <div class="planner-controls">
+        <label class="switch-line">
+          <span>
+            <strong>One-room allowance applies</strong>
+            <small>Planner confirms the home occupation is confined to one room.</small>
+          </span>
+          <span class="switch">
+            <input id="one-room" type="checkbox" />
+            <span class="slider" aria-hidden="true"></span>
+          </span>
+        </label>
+
+        <label>
+          <span>Nonresident employees</span>
+          <select id="nonresident-employees">
+            <option value="unknown">Unknown / confirm</option>
+            <option value="0">0</option>
+            <option value="1">1</option>
+            <option value="2plus">2 or more</option>
+          </select>
+        </label>
+
+        <label class="switch-line">
+          <span>
+            <strong>No exterior operations proposed</strong>
+            <small>Turn off if any business operation would occur outdoors.</small>
+          </span>
+          <span class="switch">
+            <input id="no-exterior" type="checkbox" checked />
+            <span class="slider" aria-hidden="true"></span>
+          </span>
+        </label>
+      </div>
+
+      <div class="area-math" aria-live="polite">
+        <div><span>Review area</span><strong id="area-used-display">—</strong></div>
+        <div><span>20% allowance</span><strong id="area-limit-display">—</strong></div>
+        <div><span>Percent of dwelling</span><strong id="area-percent-display">—</strong></div>
+      </div>
+
+      <div id="review-list" class="review-list"></div>
+      <p class="review-note">Click a colored flag to manually cycle Green → Yellow → Red. A manual override can be returned to the tool's calculated status with “Use auto.”</p>
+    </section>
+
+    <section class="card" aria-labelledby="notice-heading">
+      <div class="section-heading">
+        <div>
+          <p class="step-label">Step 4</p>
+          <h2 id="notice-heading">Notice language</h2>
+        </div>
+        <button id="refresh-notice" class="button secondary" type="button">Refresh paragraph</button>
+      </div>
+
+      <div class="form-grid two-col">
+        <label>
+          <span>Notice date</span>
+          <input id="notice-date" type="date" />
+        </label>
+        <label>
+          <span>Appeal deadline</span>
+          <input id="appeal-deadline" type="date" />
+        </label>
+        <label>
+          <span>REQUEST line</span>
+          <input id="request-description" type="text" />
+        </label>
+        <label>
+          <span>Short service description</span>
+          <input id="type-of-service" type="text" placeholder="e.g., bookkeeping services" />
+        </label>
+        <label>
+          <span>Operations conducted</span>
+          <select id="where-operations">
+            <option value="within the residence">within the residence</option>
+            <option value="primarily off-site">primarily off-site</option>
+            <option value="within the residence and off-site">within the residence and off-site</option>
+          </select>
+        </label>
+        <label>
+          <span>Client sentence</span>
+          <input id="client-sentence" type="text" />
+        </label>
+      </div>
+
+      <label class="full-width compact-top">
+        <span>Decision paragraph</span>
+        <textarea id="decision-paragraph" rows="7"></textarea>
+        <small>This is the paragraph that replaces the variable approval language in the Word template. You can make the small wording tweaks here before generating.</small>
+      </label>
+    </section>
+
+    <section class="card generate-card" aria-labelledby="generate-heading">
+      <div>
+        <p class="step-label">Step 5</p>
+        <h2 id="generate-heading">Generate Tentative Notice</h2>
+        <p id="generate-message" class="generate-message">The original Hercules Word template is used for the output.</p>
+      </div>
+      <button id="generate-docx" class="button primary" type="button">Generate DOCX</button>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>Planner review aid only. Final determinations remain with City staff.</p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
