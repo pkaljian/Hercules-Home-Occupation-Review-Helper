@@ -12,6 +12,9 @@
     pdfError: $('pdf-error'),
     clearForm: $('clear-form'),
     rawFields: $('raw-fields'),
+    extractionResult: $('extraction-result'),
+    applicationSummary: $('application-summary'),
+    editDataPanel: $('edit-data-panel'),
 
     aupNumber: $('aup-number'),
     propertyAddress: $('property-address'),
@@ -113,11 +116,13 @@
     });
 
     els.clientsVisit.addEventListener('change', syncClientSentence);
+    renderApplicationSummary();
     renderReview();
     refreshNoticeParagraph(false);
   }
 
   function handleInputChange() {
+    renderApplicationSummary();
     renderReview();
     refreshNoticeParagraph(false);
   }
@@ -141,9 +146,22 @@
       const pdf = await window.PDFLib.PDFDocument.load(bytes, { ignoreEncryption: false });
       const form = pdf.getForm();
       const raw = extractPdfFields(form);
+      const populatedCount = countPopulatedRawFields(raw);
       populateFromPdf(raw);
       renderRawFields(raw);
-      setPdfStatus('PDF loaded', 'success');
+      renderApplicationSummary();
+
+      if (populatedCount === 0) {
+        setPdfStatus('PDF has no filled fields', 'warning');
+        setExtractionResult('No completed form values were found in the PDF. If this is a scanned or print-to-PDF copy, send me one example so I can add a flattened/scanned-PDF fallback. For the normal fillable Hercules form, no re-entry should be required.', 'warning');
+        els.editDataPanel.open = true;
+      } else {
+        const mapped = countMappedApplicationValues();
+        setPdfStatus(`PDF loaded · ${mapped} values extracted`, 'success');
+        setExtractionResult(`${mapped} application values were pulled directly from the PDF. Review the summary below; only open the correction panel if something imported incorrectly.`, mapped >= 8 ? 'success' : 'warning');
+        els.editDataPanel.open = false;
+      }
+
       renderReview();
       refreshNoticeParagraph(false);
     } catch (error) {
@@ -157,15 +175,23 @@
     const raw = {};
     for (const field of form.getFields()) {
       const name = field.getName();
-      const type = field.constructor?.name || 'Unknown';
+      let type = 'Unknown';
       let value = '';
 
       try {
-        if (type === 'PDFTextField') value = field.getText() || '';
-        else if (type === 'PDFRadioGroup') value = field.getSelected() || '';
-        else if (type === 'PDFCheckBox') value = field.isChecked() ? 'Yes' : 'No';
-        else if (type === 'PDFDropdown' || type === 'PDFOptionList') value = (field.getSelected() || []).join(', ');
-        else value = '';
+        // Do not rely on constructor.name here. The production pdf-lib bundle can
+        // minify class names, which caused V1 to see every field as blank.
+        if (typeof field.getText === 'function') {
+          type = 'Text';
+          value = field.getText() || '';
+        } else if (typeof field.getSelected === 'function') {
+          const selected = field.getSelected();
+          type = Array.isArray(selected) ? 'Choice' : 'Radio';
+          value = Array.isArray(selected) ? selected.join(', ') : (selected || '');
+        } else if (typeof field.isChecked === 'function') {
+          type = 'Checkbox';
+          value = field.isChecked() ? 'Yes' : 'No';
+        }
       } catch (error) {
         value = '';
       }
@@ -173,6 +199,10 @@
       raw[name] = { value: String(value ?? '').trim(), type };
     }
     return raw;
+  }
+
+  function countPopulatedRawFields(raw) {
+    return Object.values(raw).filter((item) => String(item?.value || '').trim()).length;
   }
 
   function getRaw(raw, name) {
@@ -210,7 +240,7 @@
     els.storageSqft.value = numberOrBlank(getRaw(raw, 'Size of area to be used for storage square feet'));
     els.homeSqft.value = numberOrBlank(getRaw(raw, '1'));
     els.materials.value = getRaw(raw, '2');
-    els.materialsLocation.value = getRaw(raw, 'Where will any such materials be stored Indicate on floor plan');
+    els.materialsLocation.value = joinRaw(raw, 'Where will any such materials be stored Indicate on floor plan', 'Are any materials classified as hazardous');
     els.hazardous.value = normalizeRadio(getRaw(raw, 'undefined_5'));
     els.peopleCount.value = getRaw(raw, 'NOTE Employees who are not residents of your address see Condition No 3 below') || getRaw(raw, 'How many people will operate your home business');
     els.improvements.value = normalizeRadio(getRaw(raw, 'Will your home business require any improvements to your residence'));
@@ -227,6 +257,68 @@
     }
     inferWhereOperations();
     syncClientSentence();
+  }
+
+  function setExtractionResult(message, kind = 'neutral') {
+    els.extractionResult.textContent = message;
+    els.extractionResult.className = `extraction-result ${kind}`;
+  }
+
+  function summaryValue(value, fallback = 'Not found in PDF') {
+    const clean = String(value ?? '').trim();
+    return { text: clean || fallback, missing: !clean };
+  }
+
+  function yesNoLabel(value) {
+    if (value === 'yes') return 'Yes';
+    if (value === 'no') return 'No';
+    return '';
+  }
+
+  function applicationSummaryItems() {
+    const businessArea = numeric(els.reviewSqft);
+    const homeArea = numeric(els.homeSqft);
+    const hours = [els.hoursDay.value.trim() && `${els.hoursDay.value.trim()} / day`, els.hoursWeek.value.trim() && `${els.hoursWeek.value.trim()} / week`].filter(Boolean).join(' · ');
+
+    return [
+      ['AUP #', els.aupNumber.value],
+      ['Property address', els.propertyAddress.value],
+      ['Applicant', els.applicantName.value],
+      ['Business', els.businessName.value],
+      ['Business description', els.businessDescription.value],
+      ['Home operation', els.homeOperation.value],
+      ['Clients visit home', yesNoLabel(els.clientsVisit.value)],
+      ['Hours', hours],
+      ['Deliveries', els.deliveries.value],
+      ['Vehicle', els.vehicle.value],
+      ['Area used', els.areaLocation.value],
+      ['Business area', businessArea === null ? '' : `${formatNumber(businessArea)} sq. ft.`],
+      ['Dwelling area', homeArea === null ? '' : `${formatNumber(homeArea)} sq. ft.`],
+      ['Materials stored', els.materials.value],
+      ['Materials location', els.materialsLocation.value],
+      ['Hazardous materials', yesNoLabel(els.hazardous.value)],
+      ['People operating business', els.peopleCount.value],
+      ['Residence improvements', yesNoLabel(els.improvements.value)],
+    ];
+  }
+
+  function countMappedApplicationValues() {
+    return applicationSummaryItems().filter(([, value]) => String(value ?? '').trim()).length;
+  }
+
+  function renderApplicationSummary() {
+    if (!els.applicationSummary) return;
+    const items = applicationSummaryItems();
+    const hasAnyValue = items.some(([, value]) => String(value ?? '').trim());
+    if (!hasAnyValue) {
+      els.applicationSummary.innerHTML = '<div class="summary-empty">No application loaded yet.</div>';
+      return;
+    }
+    const cards = items.map(([label, value]) => {
+      const result = summaryValue(value);
+      return `<div class="summary-item ${result.missing ? 'missing' : ''}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(result.text)}</strong></div>`;
+    }).join('');
+    els.applicationSummary.innerHTML = cards;
   }
 
   function renderRawFields(raw) {
@@ -793,8 +885,11 @@
     lastAutoBusinessArea = null;
     lastImportedBusinessName = '';
     setPdfStatus('No PDF loaded', 'neutral');
+    setExtractionResult('Upload a completed application and the values below will be read directly from the PDF.', 'neutral');
+    els.editDataPanel.open = false;
     hidePdfError();
     els.decisionParagraph.dataset.generated = 'true';
+    renderApplicationSummary();
     renderReview();
     refreshNoticeParagraph(true);
   }

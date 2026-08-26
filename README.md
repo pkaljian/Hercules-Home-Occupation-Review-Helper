@@ -2,15 +2,16 @@
 
 A static browser-based review tool for City of Hercules Home Occupation Administrative Use Permits.
 
-## What V1 does
+## What V2 does
 
 1. Loads the completed 2025 Home Occupation AUP fillable PDF directly in the browser.
-2. Pulls available AcroForm values into editable review fields.
-3. Applies a Green / Yellow / Red stoplight review for Hercules Municipal Code §13-35.270.
-4. Gives the planner a toggle for the §13-35.270.1 one-room allowance.
-5. Lets the planner override any stoplight flag.
-6. Generates the existing Hercules Tentative Notice of Decision as a new `.docx` file.
-7. Does **not** create or maintain a permit log.
+2. Pulls completed AcroForm values directly from the PDF and shows them first as a read-only extracted summary.
+3. Keeps the full data-entry fields collapsed as a **correction panel only**; normal applications should not require re-entry.
+4. Applies a Green / Yellow / Red stoplight review for Hercules Municipal Code §13-35.270.
+5. Gives the planner a toggle for the §13-35.270.1 one-room allowance.
+6. Lets the planner override any stoplight flag.
+7. Generates the existing Hercules Tentative Notice of Decision as a new `.docx` file.
+8. Does **not** create or maintain a permit log.
 
 No application data is sent to a server. PDF reading and DOCX generation happen in the browser.
 
@@ -63,7 +64,7 @@ The permit/application data itself remains local in the browser.
 
 ## Important PDF-field note
 
-The 2025 Hercules PDF contains several inherited or shifted AcroForm field names. For example, the visible **Hours per day** field is internally named after the following deliveries question. V1 maps these by the positions in the provided 2025 form.
+The 2025 Hercules PDF contains several inherited or shifted AcroForm field names. For example, the visible **Hours per day** field is internally named after the following deliveries question. V2 maps these to the visible fields in the provided 2025 form. V2 also fixes the PDF reader so it does not depend on minified JavaScript class names when identifying text and radio fields.
 
 A **PDF field debug** section is included in the app. When testing a real completed application, expand it if a value appears in the wrong place. The table shows the exact PDF field names and values so the mapping can be corrected quickly.
 
@@ -114,4 +115,4 @@ Use one previously approved, completed Home Occupation application and compare:
 3. generated decision paragraph; and
 4. generated Word document against the manually produced notice.
 
-The most likely V1 adjustment will be one or two PDF field mappings because the source form's internal field names are inconsistent with their visible labels.
+If a real completed application still does not import, check whether it has been **flattened, printed to PDF, or scanned**. Those copies no longer contain the original fillable-field values. A real example of that file type can be used to add a text/OCR fallback without changing the normal digital-form workflow.
