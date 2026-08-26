@@ -3,6 +3,8 @@
 
   const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
   const TEMPLATE_URL = 'assets/AUP-Notice-Template.docx';
+  const OCR_RENDER_WIDTH = 1700;
+  const HEADER_RENDER_WIDTH = 900;
 
   const $ = (id) => document.getElementById(id);
 
@@ -10,8 +12,13 @@
     pdfFile: $('pdf-file'),
     pdfStatus: $('pdf-status'),
     pdfError: $('pdf-error'),
+    ocrProgressWrap: $('ocr-progress-wrap'),
+    ocrStage: $('ocr-stage'),
+    ocrPercent: $('ocr-percent'),
+    ocrProgress: $('ocr-progress'),
     clearForm: $('clear-form'),
     rawFields: $('raw-fields'),
+    ocrDebug: $('ocr-debug'),
     extractionResult: $('extraction-result'),
     applicationSummary: $('application-summary'),
     editDataPanel: $('edit-data-panel'),
@@ -137,38 +144,465 @@
     if (!file) return;
 
     hidePdfError();
+    hideOcrProgress();
+    els.ocrDebug.textContent = 'No OCR run yet.';
     setPdfStatus('Reading PDF…', 'warning');
 
     try {
-      if (!window.PDFLib) throw new Error('PDF library did not load. Check the internet connection and reload the page.');
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let raw = {};
 
-      const bytes = await file.arrayBuffer();
-      const pdf = await window.PDFLib.PDFDocument.load(bytes, { ignoreEncryption: false });
-      const form = pdf.getForm();
-      const raw = extractPdfFields(form);
-      const populatedCount = countPopulatedRawFields(raw);
-      populateFromPdf(raw);
-      renderRawFields(raw);
-      renderApplicationSummary();
-
-      if (populatedCount === 0) {
-        setPdfStatus('PDF has no filled fields', 'warning');
-        setExtractionResult('No completed form values were found in the PDF. If this is a scanned or print-to-PDF copy, send me one example so I can add a flattened/scanned-PDF fallback. For the normal fillable Hercules form, no re-entry should be required.', 'warning');
-        els.editDataPanel.open = true;
-      } else {
-        const mapped = countMappedApplicationValues();
-        setPdfStatus(`PDF loaded · ${mapped} values extracted`, 'success');
-        setExtractionResult(`${mapped} application values were pulled directly from the PDF. Review the summary below; only open the correction panel if something imported incorrectly.`, mapped >= 8 ? 'success' : 'warning');
-        els.editDataPanel.open = false;
+      // Fast path: preserve the direct AcroForm extraction for genuinely fillable copies.
+      if (window.PDFLib) {
+        try {
+          const fieldPdf = await window.PDFLib.PDFDocument.load(bytes.slice(), { ignoreEncryption: false });
+          const form = fieldPdf.getForm();
+          raw = extractPdfFields(form);
+          populateFromPdf(raw);
+        } catch (fieldError) {
+          console.warn('Fillable-field extraction was unavailable:', fieldError);
+        }
       }
 
+      renderRawFields(raw);
+      renderApplicationSummary();
+      const directMapped = countMappedApplicationValues();
+
+      if (directMapped >= 12) {
+        setPdfStatus(`PDF loaded · ${directMapped} values extracted`, 'success');
+        setExtractionResult(`${directMapped} application values were pulled directly from the fillable PDF. Review the summary below; only open the correction panel if something imported incorrectly.`, 'success');
+        els.editDataPanel.open = false;
+        renderReview();
+        refreshNoticeParagraph(false);
+        return;
+      }
+
+      if (!window.pdfjsLib || !window.Tesseract) {
+        throw new Error('The scanned-PDF reader did not load. Check the internet connection and reload the page.');
+      }
+
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+      showOcrProgress('Preparing scanned-PDF reader…', 2);
+      setPdfStatus('Scanning application…', 'warning');
+
+      const pdfjsDoc = await window.pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+      const ocrResult = await extractScannedApplication(pdfjsDoc, file.name);
+      populateFromOcr(ocrResult.values);
+      renderApplicationSummary();
       renderReview();
       refreshNoticeParagraph(false);
+
+      const mapped = countMappedApplicationValues();
+      els.ocrDebug.textContent = buildOcrDebugText(ocrResult);
+      hideOcrProgress();
+
+      const pageMessage = ocrResult.formStartPage
+        ? `Form located at PDF page ${ocrResult.formStartPage}; application pages ${ocrResult.formStartPage + 1}–${ocrResult.formStartPage + 2} were read.`
+        : 'Application pages were read with OCR.';
+
+      setPdfStatus(`Scan complete · ${mapped} values extracted`, mapped >= 10 ? 'success' : 'warning');
+      setExtractionResult(`${mapped} application values were extracted from the scanned/flattened PDF. ${pageMessage} Review the summary below and only correct anything the scan misread.`, mapped >= 10 ? 'success' : 'warning');
+      els.editDataPanel.open = mapped < 8;
     } catch (error) {
       console.error(error);
+      hideOcrProgress();
       setPdfStatus('Could not read PDF', 'warning');
-      showPdfError(`Could not read the form fields in this PDF. ${error.message || ''}`.trim());
+      showPdfError(`Could not extract the Home Occupation application. ${error.message || ''}`.trim());
+      els.editDataPanel.open = true;
     }
+  }
+
+  function showOcrProgress(stage, percent = 0) {
+    els.ocrProgressWrap.hidden = false;
+    updateOcrProgress(stage, percent);
+  }
+
+  function hideOcrProgress() {
+    els.ocrProgressWrap.hidden = true;
+  }
+
+  function updateOcrProgress(stage, percent) {
+    const pct = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+    els.ocrStage.textContent = stage;
+    els.ocrPercent.textContent = `${pct}%`;
+    els.ocrProgress.value = pct;
+    els.ocrProgress.textContent = `${pct}%`;
+  }
+
+  let ocrStagePrefix = 'Reading scanned form';
+
+  async function createOcrWorker() {
+    updateOcrProgress('Loading OCR engine…', 4);
+    return window.Tesseract.createWorker('eng', 1, {
+      logger: (message) => {
+        if (typeof message?.progress === 'number') {
+          updateOcrProgress(ocrStagePrefix, 8 + (message.progress * 88));
+        } else if (message?.status) {
+          updateOcrProgress(`${ocrStagePrefix} · ${message.status}`, els.ocrProgress.value || 5);
+        }
+      },
+    });
+  }
+
+  async function extractScannedApplication(pdfjsDoc, fileName) {
+    let worker;
+    try {
+      worker = await createOcrWorker();
+      const formLocation = await findFormStartPage(pdfjsDoc, worker);
+      const formStartPage = formLocation.pageNumber;
+      if (!formStartPage || formStartPage + 2 > pdfjsDoc.numPages) {
+        throw new Error('I could not locate the Hercules Home Occupation form pages in this packet.');
+      }
+
+      ocrStagePrefix = `Reading application page 2 of 3`;
+      updateOcrProgress(ocrStagePrefix, 8);
+      const page2Canvas = await renderPdfPageToCanvas(pdfjsDoc, formStartPage + 1, OCR_RENDER_WIDTH);
+      const page2Result = await worker.recognize(page2Canvas, { rotateAuto: true });
+
+      ocrStagePrefix = `Reading application page 3 of 3`;
+      updateOcrProgress(ocrStagePrefix, 8);
+      const page3Canvas = await renderPdfPageToCanvas(pdfjsDoc, formStartPage + 2, OCR_RENDER_WIDTH);
+      const page3Result = await worker.recognize(page3Canvas, { rotateAuto: true });
+
+      // Hours are small and sit on the top line of page 3. A tiny digits-only
+      // second pass materially improves 25/29 and similar OCR confusions.
+      const numericHours = await recognizeHoursNumbers(worker, page3Canvas);
+
+      const nativeHeaderText = await getPdfJsPageText(pdfjsDoc, formStartPage);
+      const headerText = [formLocation.headerText, nativeHeaderText].filter(Boolean).join(' ');
+      const values = parseScannedForm(
+        page2Result?.data?.text || '',
+        page3Result?.data?.text || '',
+        headerText || '',
+        fileName || ''
+      );
+      if (numericHours.hoursDay) values.hoursDay = numericHours.hoursDay;
+      if (numericHours.hoursWeek) values.hoursWeek = numericHours.hoursWeek;
+
+      return {
+        formStartPage,
+        headerText,
+        page2Text: page2Result?.data?.text || '',
+        page3Text: page3Result?.data?.text || '',
+        values,
+      };
+    } finally {
+      if (worker) {
+        try { await worker.terminate(); } catch (error) { console.warn('OCR worker shutdown:', error); }
+      }
+    }
+  }
+
+  async function recognizeHoursNumbers(worker, page3Canvas) {
+    const crop = cropCanvas(page3Canvas, 0, 0, page3Canvas.width, Math.round(page3Canvas.height * 0.18));
+    try {
+      ocrStagePrefix = 'Double-checking hours';
+      await worker.setParameters({ tessedit_char_whitelist: '0123456789.' });
+      const result = await worker.recognize(crop);
+      const numbers = String(result?.data?.text || '').match(/\d+(?:\.\d+)?/g) || [];
+      return { hoursDay: numbers[0] || '', hoursWeek: numbers[1] || '' };
+    } catch (error) {
+      console.warn('Hours verification OCR failed:', error);
+      return { hoursDay: '', hoursWeek: '' };
+    } finally {
+      try { await worker.setParameters({ tessedit_char_whitelist: '' }); } catch (error) { /* ignore */ }
+    }
+  }
+
+  async function findFormStartPage(pdfjsDoc, worker) {
+    // Cheap first pass: look for a usable text layer before doing any OCR.
+    for (let pageNumber = 1; pageNumber <= pdfjsDoc.numPages; pageNumber += 1) {
+      const text = await getPdfJsPageText(pdfjsDoc, pageNumber);
+      if (looksLikeFormCover(text)) {
+        return { pageNumber, headerText: text };
+      }
+    }
+
+    // Scanned packets can have attachments before the five-page form. OCR only the
+    // upper portion of each page until the Home Occupation form cover is found.
+    for (let pageNumber = 1; pageNumber <= pdfjsDoc.numPages; pageNumber += 1) {
+      ocrStagePrefix = `Finding Home Occupation form · page ${pageNumber} of ${pdfjsDoc.numPages}`;
+      updateOcrProgress(ocrStagePrefix, 8);
+      const fullCanvas = await renderPdfPageToCanvas(pdfjsDoc, pageNumber, HEADER_RENDER_WIDTH);
+      const headerCanvas = cropCanvas(fullCanvas, 0, 0, fullCanvas.width, Math.max(220, Math.round(fullCanvas.height * 0.48)));
+      const result = await worker.recognize(headerCanvas, { rotateAuto: true });
+      const text = result?.data?.text || '';
+      if (looksLikeFormCover(text)) {
+        return { pageNumber, headerText: text };
+      }
+    }
+
+    return { pageNumber: null, headerText: '' };
+  }
+
+  function looksLikeFormCover(text) {
+    const normalized = String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+    const hasHomeOccupation = /home occupation/.test(normalized);
+    const hasPermit = /administrative use permit/.test(normalized) || /city of hercules/.test(normalized);
+    return hasHomeOccupation && hasPermit;
+  }
+
+  async function getPdfJsPageText(pdfjsDoc, pageNumber) {
+    try {
+      const page = await pdfjsDoc.getPage(pageNumber);
+      const content = await page.getTextContent();
+      return content.items.map((item) => item.str || '').join(' ').replace(/\s+/g, ' ').trim();
+    } catch (error) {
+      return '';
+    }
+  }
+
+  async function renderPdfPageToCanvas(pdfjsDoc, pageNumber, targetWidth) {
+    const page = await pdfjsDoc.getPage(pageNumber);
+    const base = page.getViewport({ scale: 1 });
+    const scale = Math.max(1, Math.min(3.4, targetWidth / Math.max(1, base.width)));
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: context, viewport }).promise;
+    return canvas;
+  }
+
+  function cropCanvas(source, x, y, width, height) {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width));
+    canvas.height = Math.max(1, Math.round(height));
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(source, Math.round(x), Math.round(y), Math.round(width), Math.round(height), 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
+
+  function buildOcrDebugText(result) {
+    return [
+      `FORM START: PDF page ${result.formStartPage || '?'}`,
+      '',
+      '--- HEADER / FORM PAGE 1 ---',
+      result.headerText || '(no header text captured)',
+      '',
+      '--- FORM PAGE 2 ---',
+      result.page2Text || '(no OCR text captured)',
+      '',
+      '--- FORM PAGE 3 ---',
+      result.page3Text || '(no OCR text captured)',
+    ].join('\n');
+  }
+
+  function parseScannedForm(page2Text, page3Text, headerText, fileName) {
+    const p2 = normalizeOcrText(page2Text);
+    const p3 = normalizeOcrText(page3Text);
+    const header = normalizeOcrText(headerText);
+
+    const businessDescription = extractBetween(p2,
+      /Describe\s+your\s+business\s*:/i,
+      /Describe\s+how\s+your\s+business\s+will\s+operate\s+from\s+home\s*:/i);
+
+    const homeOperation = extractBetween(p2,
+      /Describe\s+how\s+your\s+business\s+will\s+operate\s+from\s+home\s*:/i,
+      /Will\s+clients\s+or\s+customers[-\s]+visit\s+your\s+home/i);
+
+    const deliveries = extractBetween(p3,
+      /Other\s+than\s+US\s+mail[\s\S]*?business\s*\.?/i,
+      /Make\s*,?\s*Model[\s\S]*?vehicle\s+registered\s+to\s+the\s+applicant\s*:/i);
+
+    const vehicle = extractBetween(p3,
+      /Make\s*,?\s*Model[\s\S]*?vehicle\s+registered\s+to\s+the\s+applicant\s*:/i,
+      /What\s+area\s+of\s+your\s+house/i);
+
+    const areaLocation = extractBetween(p3,
+      /What\s+area\s+of\s+your\s+house[\s\S]*?where\s+on\s+the\s+floor\s+plan\s*\)?/i,
+      /Size\s+of\s+area\s+to\s+be\s+used\s+for\s+office/i);
+
+    const materials = extractBetween(p3,
+      /What\s+materials\s+will\s+be\s+stored\s+at\s+your\s+home\??[\s\S]*?office\s+supplies\)?/i,
+      /Where\s+will\s+any\s+such\s+materials\s+be\s+stored/i);
+
+    const materialsLocation = extractBetween(p3,
+      /Where\s+will\s+any\s+such\s+materials\s+be\s+stored\??[\s\S]*?floor\s+plan\)?/i,
+      /Are\s+any\s+materials\s+classified\s+as\s+hazardous/i);
+
+    const clientsLine = findLine(p2, /Will\s+clients\s+or\s+customers[-\s]+visit\s+your\s+home/i);
+    let clientsVisit = inferMarkedYesNo(clientsLine);
+    const semanticClientText = `${businessDescription} ${homeOperation}`.toLowerCase();
+    if (clientsVisit === 'unknown' && /no\s+(customer|client)s?\s+(visit|visits|visiting)|customers?\s+will\s+not\s+visit|clients?\s+will\s+not\s+visit/.test(semanticClientText)) {
+      clientsVisit = 'no';
+    }
+
+    const hazardousLine = findLine(p3, /Are\s+any\s+materials\s+classified\s+as\s+hazardous/i);
+    const improvementsLine = findLine(p3, /Will\s+your\s+home\s+business\s+require\s+any\s+improvements/i);
+
+    const hoursMatch = p3.match(/Estimated\s+hours\s+of\s+operation\s*:\s*Per\s+day\s*([0-9]+(?:\.[0-9]+)?)\s+Pe+r?\s*week\s*([0-9]+(?:\.[0-9]+)?)/i)
+      || p3.match(/Per\s+day\s*([0-9]+(?:\.[0-9]+)?)[\s\S]{0,40}?Per\s+week\s*([0-9]+(?:\.[0-9]+)?)/i);
+
+    const values = {
+      aupNumber: findAupNumber(fileName, header),
+      propertyAddress: cleanAddress(lineValue(p2, /Property\s+Address\s*:/i)),
+      businessName: lineValue(p2, /Name\s+of\s+Business\s*:/i),
+      applicantName: lineValue(p2, /Applicant\s+Name\s*:/i),
+      businessDescription,
+      homeOperation,
+      clientsVisit,
+      clientDetails: lineValue(p2, /If\s+yes\s*,?\s*how\s+many\s+at\s+one\s+time\s+and\s+how\s+will\s+they\s+be\s+scheduled\s*\??/i),
+      hoursDay: hoursMatch?.[1] || '',
+      hoursWeek: hoursMatch?.[2] || '',
+      deliveries,
+      vehicle,
+      areaLocation,
+      officeSqft: numericValueAfterLabel(p3, /Size\s+of\s+area\s+to\s+be\s+used\s+for\s+office\s*\(?(?:square\s+feet)?\)?\s*\??/i),
+      storageSqft: numericValueAfterLabel(p3, /Size\s+of\s+area\s+to\s+be\s+used\s+for\s+storage\s*\(?(?:square\s+feet)?\)?\s*\??/i),
+      homeSqft: numericValueAfterLabel(p3, /Total\s+square\s+footage\s+of\s+your\s+house\/?apartment\s*\??/i),
+      materials,
+      materialsLocation,
+      hazardous: inferMarkedYesNo(hazardousLine),
+      peopleCount: lineValue(p3, /How\s+many\s+people\s+will\s+operate\s+your\s+home\s+business\s*\??/i),
+      improvements: inferMarkedYesNo(improvementsLine),
+    };
+
+    // Tesseract occasionally reads the form's checked "No" box but misses the mark.
+    // When the answer immediately following "If yes, please describe" is N/A and no
+    // hazardous material is described, treating the response as No is a safe extraction
+    // of the applicant's form response—not a planning finding.
+    if (values.hazardous === 'unknown') {
+      const hazardDescription = lineValue(p3, /If\s+yes\s*,?\s*please\s+describe\s*\.?/i);
+      if (/^(n\/?a|none)$/i.test(hazardDescription)) values.hazardous = 'no';
+    }
+
+    return values;
+  }
+
+  function populateFromOcr(values) {
+    const assign = (el, value, { overwrite = false } = {}) => {
+      const clean = String(value ?? '').trim();
+      if (!clean) return;
+      if (overwrite || !String(el.value || '').trim() || el.value === 'unknown') el.value = clean;
+    };
+
+    assign(els.aupNumber, values.aupNumber);
+    assign(els.propertyAddress, values.propertyAddress);
+    assign(els.businessName, values.businessName);
+    assign(els.applicantName, values.applicantName);
+    assign(els.businessDescription, values.businessDescription);
+    assign(els.homeOperation, values.homeOperation);
+    if (values.clientsVisit && values.clientsVisit !== 'unknown') els.clientsVisit.value = values.clientsVisit;
+    assign(els.clientDetails, values.clientDetails);
+    assign(els.hoursDay, values.hoursDay);
+    assign(els.hoursWeek, values.hoursWeek);
+    assign(els.deliveries, values.deliveries);
+    assign(els.vehicle, values.vehicle);
+    assign(els.areaLocation, values.areaLocation);
+    assign(els.officeSqft, numberOrBlank(values.officeSqft));
+    assign(els.storageSqft, numberOrBlank(values.storageSqft));
+    assign(els.homeSqft, numberOrBlank(values.homeSqft));
+    assign(els.materials, values.materials);
+    assign(els.materialsLocation, values.materialsLocation);
+    if (values.hazardous && values.hazardous !== 'unknown') els.hazardous.value = values.hazardous;
+    assign(els.peopleCount, values.peopleCount);
+    if (values.improvements && values.improvements !== 'unknown') els.improvements.value = values.improvements;
+
+    syncAutoBusinessArea(true);
+
+    if (!els.requestDescription.value || els.requestDescription.value === 'Home Occupation') {
+      els.requestDescription.value = els.businessName.value ? `Home Occupation - ${els.businessName.value}` : 'Home Occupation';
+    }
+    lastImportedBusinessName = els.businessName.value;
+    if (!els.typeOfService.value) els.typeOfService.value = shortServiceDescription(els.businessDescription.value);
+    inferWhereOperations();
+    syncClientSentence();
+  }
+
+  function normalizeOcrText(text) {
+    return String(text || '')
+      .replace(/\r/g, '')
+      .replace(/[“”]/g, '"')
+      .replace(/[’‘]/g, "'")
+      .replace(/\u00a0/g, ' ')
+      .split('\n')
+      .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  function lineValue(text, labelRegex) {
+    const lines = String(text || '').split('\n');
+    for (const line of lines) {
+      const match = line.match(labelRegex);
+      if (!match) continue;
+      const index = match.index + match[0].length;
+      return cleanOcrAnswer(line.slice(index));
+    }
+    return '';
+  }
+
+  function findLine(text, labelRegex) {
+    return String(text || '').split('\n').find((line) => labelRegex.test(line)) || '';
+  }
+
+  function extractBetween(text, startRegex, endRegex) {
+    const source = String(text || '');
+    const start = source.match(startRegex);
+    if (!start) return '';
+    const tail = source.slice(start.index + start[0].length);
+    const end = tail.match(endRegex);
+    return cleanOcrAnswer(end ? tail.slice(0, end.index) : tail);
+  }
+
+  function cleanOcrAnswer(value) {
+    return String(value || '')
+      .replace(/(^|\n)[\s|_=—–-]{3,}(?=\n|$)/g, '\n')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\s*\n\s*/g, ' ')
+      .replace(/(^|\s)\|(?=\s|$)/g, '$1I')
+      .replace(/^[\s:;|_=—–-]+/, '')
+      .replace(/[\s|_=—–-]{3,}$/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function cleanAddress(value) {
+    return cleanOcrAnswer(value)
+      .replace(/,\s*\.\s*CA\b/i, ', CA')
+      .replace(/\s+,/g, ',')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+
+  function numericValueAfterLabel(text, labelRegex) {
+    const value = lineValue(text, labelRegex);
+    const match = value.replace(/,/g, '').match(/\d+(?:\.\d+)?/);
+    return match ? match[0] : '';
+  }
+
+  function inferMarkedYesNo(line) {
+    const value = String(line || '');
+    const yesIndex = value.search(/\byes\b/i);
+    const noIndex = value.search(/\bno\b/i);
+    if (yesIndex < 0 || noIndex < 0 || noIndex <= yesIndex) return 'unknown';
+
+    // Tesseract usually renders a checked square as combinations such as
+    // |M), |i], [HI, etc. The checked No box therefore appears between the
+    // printed words "Yes" and "No"; a checked Yes box appears immediately
+    // before "Yes". Limit the left-side sample so label text cannot count.
+    const beforeYes = value.slice(Math.max(0, yesIndex - 6), yesIndex);
+    const between = value.slice(yesIndex + 3, noIndex);
+    const hasCheckboxMarker = (token) => /[|\[\]{}()█■#]/.test(token);
+
+    if (hasCheckboxMarker(between)) return 'no';
+    if (hasCheckboxMarker(beforeYes)) return 'yes';
+    return 'unknown';
+  }
+
+  function findAupNumber(fileName, headerText) {
+    const sources = [String(fileName || ''), String(headerText || '')];
+    for (const source of sources) {
+      const match = source.match(/(?:AUP\s*(?:No\.?\s*)?)?\b(\d{2}\s*[-–—]\s*\d{1,3})\b/i);
+      if (match) return match[1].replace(/\s*[–—]\s*/g, '-').replace(/\s*-\s*/g, '-');
+    }
+    return '';
   }
 
   function extractPdfFields(form) {
@@ -881,11 +1315,13 @@
     els.hazardous.value = 'unknown';
     els.improvements.value = 'unknown';
     els.rawFields.innerHTML = '';
+    els.ocrDebug.textContent = 'No OCR run yet.';
+    hideOcrProgress();
     reviewOverrides.clear();
     lastAutoBusinessArea = null;
     lastImportedBusinessName = '';
     setPdfStatus('No PDF loaded', 'neutral');
-    setExtractionResult('Upload a completed application and the values below will be read directly from the PDF.', 'neutral');
+    setExtractionResult('Upload a completed application. Fillable values will be read directly; scanned/flattened copies will be OCR’d automatically.', 'neutral');
     els.editDataPanel.open = false;
     hidePdfError();
     els.decisionParagraph.dataset.generated = 'true';

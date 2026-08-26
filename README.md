@@ -2,18 +2,50 @@
 
 A static browser-based review tool for City of Hercules Home Occupation Administrative Use Permits.
 
-## What V2 does
+## What V3 does
 
-1. Loads the completed 2025 Home Occupation AUP fillable PDF directly in the browser.
-2. Pulls completed AcroForm values directly from the PDF and shows them first as a read-only extracted summary.
-3. Keeps the full data-entry fields collapsed as a **correction panel only**; normal applications should not require re-entry.
-4. Applies a Green / Yellow / Red stoplight review for Hercules Municipal Code §13-35.270.
-5. Gives the planner a toggle for the §13-35.270.1 one-room allowance.
-6. Lets the planner override any stoplight flag.
-7. Generates the existing Hercules Tentative Notice of Decision as a new `.docx` file.
-8. Does **not** create or maintain a permit log.
+1. Accepts both **fillable** and **scanned / flattened** Home Occupation application PDFs.
+2. Tries the fast fillable-PDF field reader first.
+3. If the file is scanned, automatically finds the Hercules Home Occupation form inside the PDF packet, even when attachments appear before the form.
+4. OCRs the application-data pages locally in the browser and populates the review fields automatically.
+5. Shows the extracted information as a read-only summary first; the full form remains a correction panel only.
+6. Applies a Green / Yellow / Red stoplight review for Hercules Municipal Code §13-35.270.
+7. Gives the planner a toggle for the §13-35.270.1 one-room allowance.
+8. Lets the planner override any stoplight flag.
+9. Generates the existing Hercules Tentative Notice of Decision as a new `.docx` file.
+10. Does **not** create or maintain a permit log.
 
-No application data is sent to a server. PDF reading and DOCX generation happen in the browser.
+The application itself is not uploaded to a server. PDF rendering, OCR, review logic, and DOCX generation occur in the user's browser. The OCR engine and language model are downloaded by the browser when needed.
+
+## Scanned-PDF workflow
+
+V3 is designed around the real application packets supplied during development:
+
+- a standard five-page scan;
+- a scan with a small native text layer;
+- a larger packet with attachments before the actual five-page Hercules form.
+
+The tool searches the packet for the page headed **City of Hercules / Administrative Use Permit / Home Occupation**, then treats the following two pages as the application-data pages. That means the form does not have to begin on PDF page 1.
+
+For scanned copies, the normal workflow is:
+
+```text
+Upload PDF
+   ↓
+Find Hercules form in packet
+   ↓
+OCR application pages 2–3
+   ↓
+Extract values
+   ↓
+Planner reviews summary / corrects any OCR error
+   ↓
+Stoplight review
+   ↓
+Generate DOCX
+```
+
+The tool also performs a small digits-only second OCR pass on the hours line because values such as `25` can otherwise be confused with `29` in low-quality scans.
 
 ## Repository structure
 
@@ -53,30 +85,32 @@ Then open:
 http://localhost:8000
 ```
 
-## External browser libraries
+## Browser libraries
 
-The site currently loads two libraries from jsDelivr:
+The site loads the following libraries from jsDelivr:
 
-- `pdf-lib` 1.17.1 - reading fillable PDF fields
-- `JSZip` 3.10.1 - opening and rebuilding the Word `.docx` package
+- `pdf-lib` 1.17.1 — reads genuine AcroForm fields when they are still present.
+- `PDF.js` 3.11.174 — renders scanned PDF pages into browser canvases.
+- `Tesseract.js` 5 — OCRs scanned form pages in the browser.
+- `JSZip` 3.10.1 — opens and rebuilds the Word `.docx` package.
 
-The permit/application data itself remains local in the browser.
+The first scanned PDF can take longer because the browser must download and initialize the OCR engine/language data. Subsequent scans in the same browser session should feel faster.
 
-## Important PDF-field note
+## OCR philosophy
 
-The 2025 Hercules PDF contains several inherited or shifted AcroForm field names. For example, the visible **Hours per day** field is internally named after the following deliveries question. V2 maps these to the visible fields in the provided 2025 form. V2 also fixes the PDF reader so it does not depend on minified JavaScript class names when identifying text and radio fields.
+OCR is treated as **data entry assistance, not a planning determination**. The extracted summary is always visible before the stoplight review and every field can be corrected in the collapsed correction panel.
 
-A **PDF field debug** section is included in the app. When testing a real completed application, expand it if a value appears in the wrong place. The table shows the exact PDF field names and values so the mapping can be corrected quickly.
+The tool intentionally does not infer the §13-35.270.1 one-room allowance. The planner controls that toggle.
+
+Checkboxes are read from the OCR representation where possible. If a yes/no response cannot be confidently identified, it remains `Unknown` rather than being guessed.
 
 ## Stoplight meaning
 
-- **Green** - application information appears consistent with the standard.
-- **Yellow** - planner review/confirmation is needed.
-- **Red** - submitted information appears inconsistent with the standard.
+- **Green** — application information appears consistent with the standard.
+- **Yellow** — planner review/confirmation is needed.
+- **Red** — submitted information appears inconsistent with the standard.
 
 A flag can be clicked to cycle Green → Yellow → Red. Manual overrides can be returned to the calculated status with **Use auto**.
-
-The code intentionally treats keyword-based text checks as Yellow rather than automatically making a discretionary finding.
 
 ## §13-35.270.1 area logic
 
@@ -106,13 +140,11 @@ The generated file name is:
 AUP [number] - [address] - Tentative Notice.docx
 ```
 
-## Recommended first test
+## Debugging a difficult scan
 
-Use one previously approved, completed Home Occupation application and compare:
+Expand **Edit extracted data → Extraction debug**. It contains:
 
-1. values imported into the screen;
-2. stoplight flags;
-3. generated decision paragraph; and
-4. generated Word document against the manually produced notice.
+- any populated AcroForm fields found in the PDF; and
+- the raw OCR text from the form header and application pages 2–3.
 
-If a real completed application still does not import, check whether it has been **flattened, printed to PDF, or scanned**. Those copies no longer contain the original fillable-field values. A real example of that file type can be used to add a text/OCR fallback without changing the normal digital-form workflow.
+If a new scanner/export format consistently places or reads data differently, the parser can be adjusted using that raw OCR text without changing the planner workflow.

@@ -12,7 +12,7 @@
     <div>
       <p class="eyebrow">City of Hercules</p>
       <h1>Home Occupation AUP Review</h1>
-      <p class="subtitle">Upload a completed application, verify the extracted data, review the stoplight flags, and generate the Tentative Notice of Decision — no re-entry.</p>
+      <p class="subtitle">Upload a completed application — including scanned/flattened copies — review the extracted data and stoplight flags, then generate the Tentative Notice of Decision.</p>
     </div>
   </header>
 
@@ -28,9 +28,14 @@
 
       <label class="dropzone" for="pdf-file">
         <span class="dropzone-title">Choose completed Home Occupation PDF</span>
-        <span class="dropzone-help">The PDF is read locally in your browser. It is not uploaded anywhere.</span>
+        <span class="dropzone-help">Fillable PDFs are read directly; scanned copies are OCR’d locally in your browser. Nothing is uploaded to a server.</span>
         <input id="pdf-file" type="file" accept="application/pdf,.pdf" />
       </label>
+      <div id="ocr-progress-wrap" class="ocr-progress-wrap" hidden aria-live="polite">
+        <div class="ocr-progress-label"><span id="ocr-stage">Preparing scan…</span><strong id="ocr-percent">0%</strong></div>
+        <progress id="ocr-progress" max="100" value="0">0%</progress>
+        <p class="ocr-progress-help">Scanned packets take longer than fillable PDFs because the browser is reading the form pages as images.</p>
+      </div>
       <p id="pdf-error" class="error-message" role="alert" hidden></p>
     </section>
 
@@ -44,7 +49,7 @@
       </div>
 
       <div id="extraction-result" class="extraction-result neutral" aria-live="polite">
-        Upload a completed application and the values below will be read directly from the PDF.
+        Upload a completed application. Fillable values will be read directly; scanned/flattened copies will be OCR’d automatically.
       </div>
 
       <div id="application-summary" class="application-summary" aria-live="polite"></div>
@@ -176,9 +181,11 @@
       </div>
 
       <details id="raw-fields-panel" class="debug-panel">
-        <summary>PDF field debug</summary>
-        <p>Useful while testing real applications. If a field imports incorrectly, this shows the exact PDF field name and value.</p>
+        <summary>Extraction debug</summary>
+        <p>Useful while testing real applications. This shows any fillable-PDF fields plus the raw OCR text used for scanned copies.</p>
         <div id="raw-fields" class="raw-fields"></div>
+        <h4>OCR text</h4>
+        <pre id="ocr-debug" class="ocr-debug">No OCR run yet.</pre>
       </details>
       </details>
     </section>
@@ -302,6 +309,8 @@
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="app.js"></script>
 </body>

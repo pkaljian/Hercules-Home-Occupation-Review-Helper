@@ -311,3 +311,46 @@ input:focus, textarea:focus, select:focus, button:focus-visible, summary:focus-v
   font-size: .9rem;
   padding: 4px 0 2px;
 }
+
+/* V3 scanned-PDF OCR */
+.ocr-progress-wrap {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.ocr-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  font-size: 0.92rem;
+}
+
+.ocr-progress-wrap progress {
+  display: block;
+  width: 100%;
+  height: 0.75rem;
+}
+
+.ocr-progress-help {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.ocr-debug {
+  max-height: 24rem;
+  overflow: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
