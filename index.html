@@ -12,7 +12,7 @@
     <div>
       <p class="eyebrow">City of Hercules</p>
       <h1>Home Occupation AUP Review</h1>
-      <p class="subtitle">Upload a completed application, review the stoplight flags, and generate the Tentative Notice of Decision.</p>
+      <p class="subtitle">Upload a completed application, verify the extracted data, review the stoplight flags, and generate the Tentative Notice of Decision — no re-entry.</p>
     </div>
   </header>
 
@@ -38,10 +38,20 @@
       <div class="section-heading">
         <div>
           <p class="step-label">Step 2</p>
-          <h2 id="application-heading">Application data</h2>
+          <h2 id="application-heading">Extracted application</h2>
         </div>
-        <button id="clear-form" class="button secondary" type="button">Clear</button>
+        <button id="clear-form" class="button secondary" type="button">Reset</button>
       </div>
+
+      <div id="extraction-result" class="extraction-result neutral" aria-live="polite">
+        Upload a completed application and the values below will be read directly from the PDF.
+      </div>
+
+      <div id="application-summary" class="application-summary" aria-live="polite"></div>
+
+      <details id="edit-data-panel" class="edit-panel">
+        <summary>Edit extracted data only if something is wrong or missing</summary>
+        <p class="edit-help">This is a correction panel, not a second application form. Normally you should not need to enter these values again.</p>
 
       <div class="form-grid two-col">
         <label>
@@ -169,6 +179,7 @@
         <summary>PDF field debug</summary>
         <p>Useful while testing real applications. If a field imports incorrectly, this shows the exact PDF field name and value.</p>
         <div id="raw-fields" class="raw-fields"></div>
+      </details>
       </details>
     </section>
 
